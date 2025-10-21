@@ -1,69 +1,220 @@
 cmake_minimum_required(VERSION 3.16)
-project(IntelligentResampler LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# --- 依存ライブラリの探索 ---
-
-find_package(PkgConfig REQUIRED)
-
-# libsndfile (pkg-configを利用)
-pkg_check_modules(SNDFILE REQUIRED sndfile)
-
-# FFTW3 (pkg-configを利用)
-# libfftw3-dev パッケージなどによって提供される fftw3f.pc ファイルを探す
-pkg_check_modules(FFTW3 REQUIRED fftw3f)
-
-# Eigen (ヘッダオンリー)
-# third_party/eigen ディレクトリにEigenのヘッダを配置することを想定
-add_library(eigen INTERFACE)
-target_include_directories(eigen INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/eigen)
-
-# cxxopts (ヘッダオンリー)
-# third_party/cxxopts/include ディレクトリにcxxopts.hppを配置することを想定
-add_library(cxxopts INTERFACE)
-target_include_directories(cxxopts INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cxxopts/include)
-
-
-# --- 実行ファイルの生成 ---
-add_executable(resampler intelligent_resampler.cpp)
-
-
-# --- リンクとインクルードパスの設定 ---
-# pkg_check_modules が見つけたライブラリとインクルードパスをリンクする
-target_link_libraries(resampler PRIVATE
-    # sndfile
-    ${SNDFILE_LIBRARIES}
-
-    # fftw
-    ${FFTW3_LIBRARIES}
-
-    # ヘッダオンリーライブラリ
-    eigen
-    cxxopts
+project(Sradcon
+    VERSION 1.0.0
+    DESCRIPTION "Professional audio resampler with advanced psychoacoustic processing"
+    LANGUAGES CXX
 )
 
-# pkg_check_modules が見つけたインクルードパスを追加
-target_include_directories(resampler PRIVATE
+# C++ standard
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Build options
+option(BUILD_TESTING "Build tests" ON)
+option(BUILD_EXAMPLES "Build examples" OFF)
+option(ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+option(ENABLE_LTO "Enable Link Time Optimization" ON)
+
+# Include modules
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(GNUInstallDirs)
+
+# Find dependencies
+find_package(PkgConfig REQUIRED)
+
+# libsndfile
+pkg_check_modules(SNDFILE REQUIRED sndfile)
+
+# FFTW3
+pkg_check_modules(FFTW3 REQUIRED fftw3f)
+
+# Eigen3
+find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+
+# Thread support
+find_package(Threads REQUIRED)
+
+# cxxopts (header-only)
+add_library(cxxopts INTERFACE)
+target_include_directories(cxxopts INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/cxxopts/include>
+    $<INSTALL_INTERFACE:include>
+)
+
+# Sradcon library
+add_library(libsradcon STATIC
+    src/sradcon_legacy.cpp
+)
+
+target_include_directories(libsradcon
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(libsradcon
+    PUBLIC
+        Eigen3::Eigen
+        ${SNDFILE_LIBRARIES}
+        ${FFTW3_LIBRARIES}
+        Threads::Threads
+        cxxopts
+)
+
+target_include_directories(libsradcon PRIVATE
     ${SNDFILE_INCLUDE_DIRS}
     ${FFTW3_INCLUDE_DIRS}
 )
 
-
-# --- デバッグと最適化オプション ---
-target_compile_definitions(resampler PRIVATE
+# Set compile flags
+target_compile_definitions(libsradcon PRIVATE
     $<$<CONFIG:Debug>:ENABLE_DEBUG_MODE>
 )
 
-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_COMPILER_IS_CLANGXX)
-    # march=native は実行するマシンに最適化するため、配布時には注意
-    target_compile_options(resampler PRIVATE -O3 -march=native -ffast-math)
+# Optimization flags
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(libsradcon PRIVATE
+        -Wall -Wextra -Wpedantic
+        $<$<CONFIG:Release>:-O3 -march=native -ffast-math>
+        $<$<CONFIG:Debug>:-O0 -g>
+    )
+
+    if(ENABLE_SANITIZERS)
+        target_compile_options(libsradcon PRIVATE
+            -fsanitize=address -fsanitize=undefined
+        )
+        target_link_options(libsradcon PRIVATE
+            -fsanitize=address -fsanitize=undefined
+        )
+    endif()
 elseif(MSVC)
-    target_compile_options(resampler PRIVATE /O2 /fp:fast)
+    target_compile_options(libsradcon PRIVATE
+        /W4
+        $<$<CONFIG:Release>:/O2 /fp:fast>
+        $<$<CONFIG:Debug>:/Od /Zi>
+    )
 endif()
 
-# C++17のfilesystemを使うために必要 (特に古いGCC/Clangの場合)
-if (CMAKE_COMPILER_IS_GNUCXX AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)
-    target_link_libraries(resampler PRIVATE stdc++fs)
+# Link Time Optimization
+if(ENABLE_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
+    if(ipo_supported)
+        set_property(TARGET libsradcon PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        message(STATUS "LTO/IPO enabled")
+    else()
+        message(WARNING "LTO/IPO not supported: ${ipo_error}")
+    endif()
 endif()
+
+# Filesystem library (needed for older compilers)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)
+    target_link_libraries(libsradcon PUBLIC stdc++fs)
+endif()
+
+# Executable
+add_executable(sradcon src/sradcon.cpp)
+target_link_libraries(sradcon PRIVATE libsradcon)
+
+# Set output name
+set_target_properties(sradcon PROPERTIES OUTPUT_NAME "sradcon")
+
+# Testing
+if(BUILD_TESTING)
+    enable_testing()
+    find_package(Catch2 2 QUIET)
+
+    if(Catch2_FOUND)
+        add_executable(sradcon_tests tests/test_dsp_utils.cpp)
+        target_link_libraries(sradcon_tests PRIVATE
+            libsradcon
+            Catch2::Catch2
+        )
+
+        include(CTest)
+        include(Catch)
+        catch_discover_tests(sradcon_tests)
+
+        message(STATUS "Tests enabled")
+    else()
+        message(WARNING "Catch2 not found, tests disabled")
+    endif()
+endif()
+
+# Examples
+if(BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
+
+# Installation
+install(TARGETS sradcon
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(TARGETS libsradcon
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+
+install(DIRECTORY include/sradcon
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILES_MATCHING PATTERN "*.hpp"
+)
+
+install(FILES
+    docs/USER_GUIDE.md
+    docs/API.md
+    README.md
+    LICENSE
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}
+)
+
+# Package configuration
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/SradconConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY AnyNewerVersion
+)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SradconConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/SradconConfig.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Sradcon
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/SradconConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/SradconConfigVersion.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Sradcon
+)
+
+# CPack configuration
+set(CPACK_PACKAGE_NAME "Sradcon")
+set(CPACK_PACKAGE_VENDOR "Sradcon Developers")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${PROJECT_DESCRIPTION}")
+set(CPACK_PACKAGE_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
+set(CPACK_PACKAGE_VERSION_MINOR ${PROJECT_VERSION_MINOR})
+set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+
+include(CPack)
+
+# Print summary
+message(STATUS "")
+message(STATUS "=== Sradcon Configuration Summary ===")
+message(STATUS "Version: ${PROJECT_VERSION}")
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "C++ standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")
+message(STATUS "Build testing: ${BUILD_TESTING}")
+message(STATUS "Build examples: ${BUILD_EXAMPLES}")
+message(STATUS "Enable sanitizers: ${ENABLE_SANITIZERS}")
+message(STATUS "Enable LTO: ${ENABLE_LTO}")
+message(STATUS "=====================================")
+message(STATUS "")

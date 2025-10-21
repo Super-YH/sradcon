@@ -1,0 +1,69 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+out/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Compiled files
+*.o
+*.so
+*.a
+*.dylib
+*.dll
+*.exe
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+_deps/
+
+# Testing
+Testing/
+*.log
+
+# Debug output
+debug_plots/
+debug_plots_cpp/
+*.csv
+
+# Package files
+*.deb
+*.rpm
+*.tar.gz
+*.zip
+
+# Generated documentation
+docs/html/
+docs/latex/
+
+# Coverage files
+*.gcov
+*.gcda
+*.gcno
+coverage/
+
+# Profiling files
+*.prof
+gmon.out
+perf.data*
+
+# Logs
+*.log
+
+# Third-party downloads (if any)
+third_party/downloads/
+
+# User configuration
+*.local
+.env
