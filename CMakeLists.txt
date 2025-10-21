@@ -43,21 +43,21 @@ target_include_directories(cxxopts INTERFACE
     $<INSTALL_INTERFACE:include>
 )
 
-# Sradcon library
-add_library(libsradcon STATIC
-    src/sradcon_legacy.cpp
-)
+# Main executable - uses the original high-quality resampling algorithms
+# All core DSP algorithms (IntelligentRDOResampler, RDONoiseShaper, etc.)
+# are preserved exactly as they were
+add_executable(sradcon src/sradcon_legacy.cpp)
 
-target_include_directories(libsradcon
-    PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:include>
+target_include_directories(sradcon
     PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${SNDFILE_INCLUDE_DIRS}
+        ${FFTW3_INCLUDE_DIRS}
 )
 
-target_link_libraries(libsradcon
-    PUBLIC
+target_link_libraries(sradcon
+    PRIVATE
         Eigen3::Eigen
         ${SNDFILE_LIBRARIES}
         ${FFTW3_LIBRARIES}
@@ -65,34 +65,29 @@ target_link_libraries(libsradcon
         cxxopts
 )
 
-target_include_directories(libsradcon PRIVATE
-    ${SNDFILE_INCLUDE_DIRS}
-    ${FFTW3_INCLUDE_DIRS}
-)
-
 # Set compile flags
-target_compile_definitions(libsradcon PRIVATE
+target_compile_definitions(sradcon PRIVATE
     $<$<CONFIG:Debug>:ENABLE_DEBUG_MODE>
 )
 
 # Optimization flags
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    target_compile_options(libsradcon PRIVATE
+    target_compile_options(sradcon PRIVATE
         -Wall -Wextra -Wpedantic
         $<$<CONFIG:Release>:-O3 -march=native -ffast-math>
         $<$<CONFIG:Debug>:-O0 -g>
     )
 
     if(ENABLE_SANITIZERS)
-        target_compile_options(libsradcon PRIVATE
+        target_compile_options(sradcon PRIVATE
             -fsanitize=address -fsanitize=undefined
         )
-        target_link_options(libsradcon PRIVATE
+        target_link_options(sradcon PRIVATE
             -fsanitize=address -fsanitize=undefined
         )
     endif()
 elseif(MSVC)
-    target_compile_options(libsradcon PRIVATE
+    target_compile_options(sradcon PRIVATE
         /W4
         $<$<CONFIG:Release>:/O2 /fp:fast>
         $<$<CONFIG:Debug>:/Od /Zi>
@@ -104,7 +99,7 @@ if(ENABLE_LTO)
     include(CheckIPOSupported)
     check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
     if(ipo_supported)
-        set_property(TARGET libsradcon PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        set_property(TARGET sradcon PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
         message(STATUS "LTO/IPO enabled")
     else()
         message(WARNING "LTO/IPO not supported: ${ipo_error}")
@@ -113,12 +108,8 @@ endif()
 
 # Filesystem library (needed for older compilers)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)
-    target_link_libraries(libsradcon PUBLIC stdc++fs)
+    target_link_libraries(sradcon PRIVATE stdc++fs)
 endif()
-
-# Executable
-add_executable(sradcon src/sradcon.cpp)
-target_link_libraries(sradcon PRIVATE libsradcon)
 
 # Set output name
 set_target_properties(sradcon PROPERTIES OUTPUT_NAME "sradcon")
@@ -131,8 +122,11 @@ if(BUILD_TESTING)
     if(Catch2_FOUND)
         add_executable(sradcon_tests tests/test_dsp_utils.cpp)
         target_link_libraries(sradcon_tests PRIVATE
-            libsradcon
             Catch2::Catch2
+            Eigen3::Eigen
+        )
+        target_include_directories(sradcon_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
 
         include(CTest)
@@ -153,11 +147,6 @@ endif()
 # Installation
 install(TARGETS sradcon
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
-
-install(TARGETS libsradcon
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
 install(DIRECTORY include/sradcon
